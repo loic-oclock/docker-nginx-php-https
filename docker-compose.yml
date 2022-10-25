@@ -1,0 +1,57 @@
+version: '3'
+
+services:
+
+    nginx:
+        image: nginx:alpine
+        volumes:
+            # Configuration du serveur Nginx
+            - ./.docker/nginx/site.conf:/etc/nginx/conf.d/default.conf
+            # Partage du répertoire dans lequel Certbot enregistrera les certificats SSL
+            - ./.docker/certbot/conf:/etc/letsencrypt
+            # Partage du répertoire dans lequel Certbot générera la clé de vérification
+            # pour la délivrant du certificat SSL
+            - ./.docker/certbot/www:/var/www/certbot
+            # Partage du répertoire dans lequel se trouve le code de l'application
+            # (la racine du serveur web est déterminée dans la configuration du serveur)
+            - ./app:/var/www/html
+        ports:
+            # On mappe le port 80 du système hôte au port 80 du conteneur
+            # C'est primordial pour l'obtention et le renouvellement du certificat SSL
+            # car Let's Encrypt vérifie la demande en se connectant au port 80 du
+            # système hôte => si vous choisissez de désactiver le renouvellement automatique
+            # vous pouvez utiliser n'importe quel autre port côté système hôte une fois
+            # votre certificat SSL obtenu
+            - "80:80"
+            # On mappe le port 443 ud système hôte au port 443 du conteneur
+            # Vous pouvez utiliser n'importe quel autre port du système hôte une fois le
+            # certificat SSL obtenu
+            - "443:443"
+        depends_on:
+            # Permet de ne pas démarrer le serveur web sans le service PHP (notamment utile
+            # lors de l'obtention du certificat SSL, car l'hôte "php" est référencé dans la
+            # configuration du serveur et le service Nginx ne démarre pas s'il n'est pas
+            # disponible...)
+            - php
+        # Permet de recharger la configuration du serveur toutes les 6 heures (utile pour
+        # recharger les certificats SSL après un renouvellement automatique)
+        command: "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
+
+    certbot:
+        image: certbot/certbot:latest
+        volumes:
+            # Partage du répertoire dans lequel Certbot va enregistrer les certificats SSL
+            - ./.docker/certbot/conf:/etc/letsencrypt
+            # Partage du répertoire dans lequel Certbot va enregistrer la clé de vérification
+            # pour la délivrance du certificat SSL
+            - ./.docker/certbot/www:/var/www/certbot
+        # Permet de vérifier si le certificat a besoin d'être renouvelé toutes les 12 heures
+        # conformément aux recommandations de Let's Encrypt, et de le renouveler le cas
+        # échéant
+        entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
+    php:
+        image: php:fpm-alpine
+        volumes:
+            # Partage du répertoire contenant le code de l'application
+            - ./app:/var/www/html
